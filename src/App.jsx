@@ -243,9 +243,12 @@ export default function MeetingBooking() {
       <div className="bg-white p-4 rounded shadow mb-5 flex justify-between">
         <b>Halo, {user.email}</b>
 
-        <button className="text-red-500" onClick={() => setUser(null)}>
-          Logout
-        </button>
+        <button
+  className="text-red-500"
+  onClick={handleLogout}
+>
+  Logout
+</button>
       </div>
 
       <div className="flex gap-2 mb-5">
