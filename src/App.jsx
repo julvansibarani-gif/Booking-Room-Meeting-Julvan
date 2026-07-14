@@ -1,17 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 
-export default function MeetingBooking() {
+export default function App() {
   const [bookings, setBookings] = useState([]);
   const [user, setUser] = useState(null);
   const [view, setView] = useState('dashboard');
+  const [editingBooking, setEditingBooking] = useState(null);
 
   const [loginForm, setLoginForm] = useState({
     email: '',
     password: '',
   });
 
-  const [form, setForm] = useState({
+  const emptyForm = {
     name: '',
     location: 'Head Office Jakarta',
     room: 'Room Cendana',
@@ -21,33 +22,27 @@ export default function MeetingBooking() {
     end_time: '09:00',
     link: '',
     topic: '',
-  });
+  };
+
+  const [form, setForm] = useState(emptyForm);
 
   const isOnline = form.room === 'Zoom App' || form.room === 'GMeet';
-
-  // ======================
-  // LIST JAM 08:00 - 17:00
-  // ======================
 
   const times = [];
 
   for (let h = 8; h <= 17; h++) {
-    const hour = h.toString().padStart(2, '0');
+    const hour = String(h).padStart(2, '0');
 
-    times.push(hour + ':00');
+    times.push(`${hour}:00`);
 
     if (h !== 17) {
-      times.push(hour + ':30');
+      times.push(`${hour}:30`);
     }
   }
 
-  // ======================
-  // LOAD BOOKING
-  // ======================
-
   useEffect(() => {
     loadBookings();
-  }, [user]);
+  }, []);
 
   async function loadBookings() {
     const { data, error } = await supabase
@@ -57,16 +52,10 @@ export default function MeetingBooking() {
         ascending: true,
       });
 
-    if (error) {
-      console.log(error);
-    } else {
+    if (!error) {
       setBookings(data);
     }
   }
-
-  // ======================
-  // STATUS MEETING
-  // ======================
 
   function getMeetingStatus(date, start, end) {
     const now = new Date();
@@ -74,9 +63,9 @@ export default function MeetingBooking() {
     const today = now.toISOString().split('T')[0];
 
     const current =
-      now.getHours().toString().padStart(2, '0') +
+      String(now.getHours()).padStart(2, '0') +
       ':' +
-      now.getMinutes().toString().padStart(2, '0');
+      String(now.getMinutes()).padStart(2, '0');
 
     if (date < today) {
       return 'past';
@@ -94,10 +83,6 @@ export default function MeetingBooking() {
 
     return 'upcoming';
   }
-
-  // ======================
-  // LOGIN
-  // ======================
 
   async function handleLogin() {
     if (!loginForm.email || !loginForm.password) {
@@ -118,82 +103,152 @@ export default function MeetingBooking() {
     setUser(data.user);
   }
 
-  // ======================
-  // SIMPAN BOOKING
-  // ======================
-
-  async function addBooking() {
-    if (!form.name || !form.topic || !form.date) {
-      alert('Nama, tanggal dan topik wajib diisi');
-
-      return;
-    }
-
-    if (form.end_time <= form.start_time) {
-      alert('Jam selesai harus lebih besar dari jam mulai');
-
-      return;
-    }
-
-    // cek bentrok
-
-    const { data: existing, error } = await supabase
+  async function checkConflict() {
+    const { data } = await supabase
       .from('bookings')
       .select('*')
       .eq('location', form.location)
       .eq('room', form.room)
       .eq('date', form.date);
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
+    return data.some((b) => {
+      if (editingBooking && b.id === editingBooking.id) {
+        return false;
+      }
 
-    const conflict = existing.some((b) => {
       return form.start_time < b.end_time && form.end_time > b.start_time;
     });
+  }
+
+  async function addBooking() {
+    if (!form.name || !form.topic || !form.date) {
+      alert('Nama, tanggal dan topik wajib diisi');
+      return;
+    }
+
+    if (form.end_time <= form.start_time) {
+      alert('Jam selesai harus lebih besar');
+      return;
+    }
+
+    const conflict = await checkConflict();
 
     if (conflict) {
-      alert('⚠️ Ruangan sudah dibooking karyawan lain pada waktu tersebut!');
+      alert('⚠️ Jadwal sudah digunakan');
 
       return;
     }
 
-    const { error: insertError } = await supabase.from('bookings').insert([
+    const { error } = await supabase.from('bookings').insert([
       {
-        name: form.name,
-        location: form.location,
-        room: form.room,
-        type: form.type,
-        date: form.date,
-        start_time: form.start_time,
-        end_time: form.end_time,
+        ...form,
         link: isOnline ? form.link : '',
-        topic: form.topic,
       },
     ]);
 
-    if (insertError) {
-      console.log(insertError);
-      alert(insertError.message);
-    } else {
-      alert('✅ Booking berhasil disimpan');
+    if (error) {
+      alert(error.message);
 
-      setForm({
-        ...form,
-        name: '',
-        topic: '',
-        link: '',
-      });
-
-      loadBookings();
-
-      setView('dashboard');
+      return;
     }
+
+    alert('✅ Booking berhasil');
+
+    setForm(emptyForm);
+
+    loadBookings();
+
+    setView('dashboard');
   }
-  // ======================
-  // LOGIN SCREEN
-  // ======================
+  async function updateBooking() {
+    if (!form.name || !form.topic || !form.date) {
+      alert('Data booking belum lengkap');
+      return;
+    }
+
+    if (form.end_time <= form.start_time) {
+      alert('Jam selesai harus lebih besar dari jam mulai');
+      return;
+    }
+
+    const conflict = await checkConflict();
+
+    if (conflict) {
+      alert('⚠️ Jadwal bentrok dengan meeting lain');
+
+      return;
+    }
+
+    const { error } = await supabase
+      .from('bookings')
+      .update({
+        ...form,
+        link: isOnline ? form.link : '',
+      })
+      .eq('id', editingBooking.id);
+
+    if (error) {
+      alert(error.message);
+
+      return;
+    }
+
+    alert('✅ Reschedule berhasil');
+
+    setEditingBooking(null);
+
+    setForm(emptyForm);
+
+    loadBookings();
+
+    setView('dashboard');
+  }
+
+  function startReschedule(booking) {
+    setEditingBooking(booking);
+
+    setForm({
+      name: booking.name,
+
+      location: booking.location,
+
+      room: booking.room,
+
+      type: booking.type,
+
+      date: booking.date,
+
+      start_time: booking.start_time,
+
+      end_time: booking.end_time,
+
+      link: booking.link || '',
+
+      topic: booking.topic,
+    });
+
+    setView('form');
+  }
+
+  async function deleteBooking(id) {
+    const confirmDelete = window.confirm('Hapus booking ini?');
+
+    if (!confirmDelete) {
+      return;
+    }
+
+    const { error } = await supabase.from('bookings').delete().eq('id', id);
+
+    if (error) {
+      alert(error.message);
+
+      return;
+    }
+
+    alert('Booking dihapus');
+
+    loadBookings();
+  }
 
   if (!user) {
     return (
@@ -207,6 +262,7 @@ export default function MeetingBooking() {
           onChange={(e) =>
             setLoginForm({
               ...loginForm,
+
               email: e.target.value,
             })
           }
@@ -216,9 +272,11 @@ export default function MeetingBooking() {
           type="password"
           className="border p-2 w-full mb-3"
           placeholder="Password"
+          value={loginForm.password}
           onChange={(e) =>
             setLoginForm({
               ...loginForm,
+
               password: e.target.value,
             })
           }
@@ -234,30 +292,39 @@ export default function MeetingBooking() {
     );
   }
 
-  // ======================
-  // MAIN APP
-  // ======================
-
   return (
     <div className="max-w-3xl mx-auto p-5 bg-gray-100 min-h-screen">
       <div className="bg-white p-4 rounded shadow mb-5 flex justify-between">
         <b>Halo, {user.email}</b>
 
-        <button className="text-red-500" onClick={() => setUser(null)}>
+        <button
+          className="text-red-500"
+          onClick={() => {
+            setUser(null);
+          }}
+        >
           Logout
         </button>
       </div>
 
       <div className="flex gap-2 mb-5">
         <button
-          onClick={() => setView('dashboard')}
+          onClick={() => {
+            setView('dashboard');
+          }}
           className="bg-blue-600 text-white flex-1 p-2 rounded"
         >
           Dashboard
         </button>
 
         <button
-          onClick={() => setView('form')}
+          onClick={() => {
+            setEditingBooking(null);
+
+            setForm(emptyForm);
+
+            setView('form');
+          }}
           className="bg-green-600 text-white flex-1 p-2 rounded"
         >
           Buat Booking
@@ -304,23 +371,6 @@ export default function MeetingBooking() {
 
           <select
             className="border p-2 w-full mb-3"
-            value={form.location}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                location: e.target.value,
-              })
-            }
-          >
-            <option>Head Office Jakarta</option>
-
-            <option>Kantor Regional Medan</option>
-
-            <option>Kantor Regional Kalimantan</option>
-          </select>
-
-          <select
-            className="border p-2 w-full mb-3"
             value={form.room}
             onChange={(e) =>
               setForm({
@@ -339,7 +389,6 @@ export default function MeetingBooking() {
 
             <option>GMeet</option>
           </select>
-
           <label className="font-bold">Jam Mulai</label>
 
           <select
@@ -404,10 +453,10 @@ export default function MeetingBooking() {
           </select>
 
           <button
-            onClick={addBooking}
+            onClick={editingBooking ? updateBooking : addBooking}
             className="bg-blue-600 text-white w-full p-3 rounded"
           >
-            Simpan Booking
+            {editingBooking ? 'Update Reschedule' : 'Simpan Booking'}
           </button>
         </div>
       ) : (
@@ -425,28 +474,27 @@ export default function MeetingBooking() {
 
                 ${
                   getMeetingStatus(b.date, b.start_time, b.end_time) === 'past'
-                    ? 'bg-gray-300 opacity-50 grayscale border-gray-500'
+                    ? 'bg-gray-300 opacity-50 border-gray-500'
                     : getMeetingStatus(b.date, b.start_time, b.end_time) ===
                       'live'
                     ? 'bg-white border-red-500'
                     : 'bg-white border-green-500'
                 }
 
-                `}
+              `}
               >
                 {getMeetingStatus(b.date, b.start_time, b.end_time) ===
                   'live' && (
                   <span
                     className="
-                    float-right
-                    bg-red-500
-                    text-white
-                    text-xs
-                    px-2
-                    py-1
-                    rounded
-                    animate-pulse
-                    "
+                  float-right
+                  bg-red-500
+                  text-white
+                  text-xs
+                  px-2
+                  py-1
+                  rounded
+                "
                   >
                     LIVE
                   </span>
@@ -473,11 +521,39 @@ export default function MeetingBooking() {
                     href={b.link}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-blue-500 underline"
+                    className="text-blue-500 underline block"
                   >
                     Link Meeting
                   </a>
                 )}
+
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => startReschedule(b)}
+                    className="
+                    bg-yellow-500
+                    text-white
+                    px-3
+                    py-1
+                    rounded
+                  "
+                  >
+                    Reschedule
+                  </button>
+
+                  <button
+                    onClick={() => deleteBooking(b.id)}
+                    className="
+                    bg-red-600
+                    text-white
+                    px-3
+                    py-1
+                    rounded
+                  "
+                  >
+                    Hapus
+                  </button>
+                </div>
               </div>
             ))
           )}
